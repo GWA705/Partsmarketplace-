@@ -1,0 +1,506 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// GWA Parts Marketplace
+//
+// A searchable catalogue of water-treatment parts that dealers log into and
+// order from. An order is filled either by GWA head office (our own stock) or
+// drop-shipped by the supplier — so one dealer order can split into several
+// shipments, each going to whoever fills it.
+//
+// Deliberately its own database, separate from the booking portal. The two
+// join on part code and portal SKU, never on a foreign key.
+// ═══════════════════════════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity
+//
+// Two populations that are not the same kind of thing. Dealers are external
+// companies with their own people, addresses and price tier. Staff are ours.
+// Keeping them in one table with one role enum is what makes portal permission
+// checks go wrong, so they are separate here from the start.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum UserKind {
+  DEALER // works for a dealer company; sees dealer pricing only
+  STAFF // GHS-Barrie office or service; sees cost, orders against a job
+}
+
+enum StaffRole {
+  VIEWER // can search the catalogue, nothing else
+  ORDERER // can place internal orders
+  ADMIN // catalogue, pricing, dealers, everything
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  kind      UserKind
+  /// Only meaningful when kind = STAFF.
+  staffRole StaffRole @default(VIEWER)
+  /// Only set when kind = DEALER. A dealer user always belongs to one dealer.
+  dealerId  String?
+  dealer    Dealer?  @relation(fields: [dealerId], references: [id], onDelete: Cascade)
+
+  /// Null for staff who sign in by portal token rather than a password here.
+  passwordHash String?
+  active       Boolean @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ordersPlaced Order[] @relation("OrderPlacedBy")
+
+  @@index([dealerId])
+  @@index([kind, active])
+}
+
+/// A dealer company. Orders belong to the dealer, not to the person who
+/// happened to place them — so when someone leaves, the order history stays.
+model Dealer {
+  id         String  @id @default(cuid())
+  name       String  @unique
+  /// Short code used on packing slips and POs, e.g. "BARRIE-01".
+  code       String? @unique
+  contactEmail String?
+  phone      String?
+
+  shipAttn    String?
+  shipLine1   String?
+  shipLine2   String?
+  shipCity    String?
+  shipProvince String?
+  shipPostal  String?
+  shipCountry String? @default("Canada")
+
+  /// Price tier — resolves a markup when no per-part dealer price is set.
+  /// See PricingSettings and PriceRule.
+  tier       String  @default("STANDARD")
+  /// Dealer-specific notes for whoever fills their orders.
+  fulfillmentNote String?
+
+  active     Boolean @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  users  User[]
+  orders Order[]
+
+  @@index([active])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Catalogue
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A browsable grouping (e.g. "Pur100-7 Replacement Parts", "Demo Materials").
+/// Only 28% of the imported catalogue carries one, so categories are a filter,
+/// never the primary navigation — search is (see lib/search.ts).
+model PartCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parts Part[]
+
+  @@index([active])
+}
+
+/// What the suffix on a part code means.
+///
+/// Part codes end in a segment that is either a DEPARTMENT or a WAREHOUSE —
+/// e.g. ".SC", ".DEM", ".HD" are departments; ".LNDN", ".WIND", ".EDM",
+/// ".MISS", ".CAL" are warehouse locations. The import derives the raw segment
+/// off every code and files it here; an admin sets what each one means.
+///
+/// Modelled as a table rather than an enum because the list grows whenever a
+/// new price list lands, and nobody should need a deploy to name one.
+enum CodeSegmentKind {
+  DEPARTMENT
+  WAREHOUSE
+  UNKNOWN
+}
+
+model CodeSegment {
+  /// The raw suffix, upper-cased, without the dot: "SC", "LNDN", "03".
+  code      String          @id
+  kind      CodeSegmentKind @default(UNKNOWN)
+  /// Human label shown in filters: "Softener & Conditioner", "London".
+  label     String?
+  /// False until a human has confirmed the kind and label. The admin screen
+  /// lists unconfirmed segments so a new price list's codes get named.
+  confirmed Boolean         @default(false)
+  sortOrder Int             @default(100)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  parts Part[]
+}
+
+enum PartSource {
+  PRICE_LIST // priced, no catalogue entry
+  PRICE_LIST_AND_CATALOGUE // both
+  CATALOGUE_ONLY // no item code, no price — cannot be ordered until coded
+}
+
+enum FulfilledBy {
+  HEAD_OFFICE // we hold it and ship it
+  SUPPLIER // drop-shipped by `vendor` on the dealer's behalf
+}
+
+model Part {
+  id String @id @default(cuid())
+
+  /// Price-list item code — the business key. Unique across the catalogue
+  /// (all 1,294 coded rows in the seed import are distinct). Null only for
+  /// catalogue-only rows, which import inactive until they are given a code.
+  code String? @unique
+
+  /// Catalogue Part # when it differs from `code` (e.g. 0208W.IN vs
+  /// 0208W.H2O). Both find the part in search — a dealer reads whichever
+  /// number is physically on the part in their hand.
+  catalogueCode String?
+
+  /// Price-list description: what the office and the vendor call it.
+  name String
+
+  /// Catalogue description where it differs from `name` (137 rows in the seed
+  /// import). Usually the more human of the two, so dealers see this first.
+  catalogueName String?
+
+  vendor String?
+  /// "each (ea)" | "Case (cs)" | "dozen (dz)". Missing on ~45% of the seed rows.
+  unit   String?
+
+  // ── Money ──
+  // Cost and dealer price are separate columns for one reason: the source
+  // spreadsheet's price column is VENDOR COST, sitting next to the vendor's
+  // name. Leaking it tells a dealer our margin and our supplier list. Dealer
+  // reads must go through dealerPartSelect (lib/partSelect.ts), which cannot
+  // see costCents. Nothing in the (dealer) route group selects it directly.
+  /// What we pay the vendor, in cents. INTERNAL ONLY.
+  costCents Int?
+  /// What this dealer tier pays, in cents. Null = "call for pricing".
+  /// Seeded from cost x markup at import; per-part overrides win.
+  dealerCents Int?
+  /// True when dealerCents was set by hand and must survive re-import and
+  /// bulk markup recalculation.
+  priceOverridden Boolean @default(false)
+
+  /// Who fills a dealer order for this part. Drives the order split.
+  fulfilledBy FulfilledBy @default(HEAD_OFFICE)
+
+  categoryId String?
+  category   PartCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  /// Department/warehouse segment parsed off the end of the code.
+  segmentCode String?
+  segment     CodeSegment? @relation(fields: [segmentCode], references: [code], onDelete: SetNull)
+
+  source PartSource
+
+  active    Boolean  @default(true)
+  featured  Boolean  @default(false)
+  /// Merchandising badges: NEW | SALE | CLEARANCE | POPULAR.
+  tags      String[] @default([])
+  sortOrder Int      @default(100)
+
+  imageStorageKey String?
+  imageMime       String?
+  imageSizeBytes  Int?
+
+  /// Free-text note carried from the import ("Also used for: ...").
+  note String?
+
+  /// The part that replaces this one, when the catalogue marks it superseded.
+  /// Comes from codes written as "36002018 (USE 400547)" — the number on the
+  /// old part in a dealer's hand, pointing at what to send instead. Dealers
+  /// search the old number and are shown the replacement.
+  supersededBy String?
+
+  /// Portal SKUs this part fits (WHCCF, UV12, …). The join to the booking
+  /// portal: a tech looking at a service job sees the parts that fit the
+  /// equipment actually in that home. See /embed and /api/parts.
+  fitsSkus String[] @default([])
+
+  /// Other part codes this one cross-references, parsed from `note`.
+  alsoUsedFor String[] @default([])
+
+  importedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  orderLines OrderLine[]
+
+  @@index([active, sortOrder])
+  @@index([categoryId])
+  @@index([vendor])
+  @@index([segmentCode])
+  @@index([fulfilledBy])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Orders
+//
+// A dealer places ONE order. Underneath, it splits into a Shipment per
+// fulfilling party — head office, plus one per drop-ship vendor — because each
+// gets its own pick list, its own packing slip and its own email. The dealer
+// never has to care about the split; the people filling it care about nothing
+// else.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum BuyerKind {
+  DEALER
+  INTERNAL
+}
+
+enum OrderStatus {
+  SUBMITTED
+  ACKNOWLEDGED
+  PARTIALLY_FULFILLED
+  FULFILLED
+  CANCELLED
+}
+
+model Order {
+  id String @id @default(cuid())
+  /// Human order number, e.g. "PO-1042". Sequential, assigned on submit.
+  number String @unique
+
+  buyerKind BuyerKind
+
+  /// Set when buyerKind = DEALER.
+  dealerId String?
+  dealer   Dealer? @relation(fields: [dealerId], references: [id])
+
+  placedById String
+  placedBy   User   @relation("OrderPlacedBy", fields: [placedById], references: [id])
+  /// Snapshot of who placed it, so the record reads right if the user is gone.
+  placedByName String
+
+  /// Set when buyerKind = INTERNAL: the portal's service job number (J-####).
+  /// A string on purpose — the portal owns jobs, we do not reach into them.
+  jobRef String?
+
+  note String?
+
+  /// Ship-to, snapshotted from the dealer at submit time so a later address
+  /// change does not rewrite history.
+  shipName     String?
+  shipLine1    String?
+  shipLine2    String?
+  shipCity     String?
+  shipProvince String?
+  shipPostal   String?
+  shipCountry  String?
+  shipPhone    String?
+
+  status      OrderStatus @default(SUBMITTED)
+  submittedAt DateTime    @default(now())
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  shipments Shipment[]
+
+  @@index([dealerId, submittedAt])
+  @@index([status])
+  @@index([submittedAt])
+}
+
+enum ShipmentStatus {
+  SUBMITTED
+  ACKNOWLEDGED
+  FULFILLED
+  CANCELLED
+}
+
+/// One order's worth of lines going to a single filling party.
+model Shipment {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  fulfilledBy FulfilledBy
+  /// The supplier filling it, when fulfilledBy = SUPPLIER. Null for head office.
+  vendor      String?
+
+  /// Chosen at checkout, carried onto every shipment so each filler knows how
+  /// to send their part of it.
+  shippingMethod String?
+
+  status      ShipmentStatus @default(SUBMITTED)
+  /// When the pick-list email went out, and to whom.
+  notifiedAt  DateTime?
+  notifiedTo  String?
+  fulfilledAt DateTime?
+  trackingRef String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines OrderLine[]
+
+  @@index([orderId])
+  @@index([status])
+  @@index([vendor])
+}
+
+/// A line is a snapshot. Once submitted it never re-reads live catalogue data —
+/// a price list landing tomorrow must not silently rewrite yesterday's order.
+model OrderLine {
+  id         String @id @default(cuid())
+  shipmentId String
+  shipment   Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  /// Kept for reporting; null if the part is later deleted outright.
+  partId String?
+  part   Part?  @relation(fields: [partId], references: [id], onDelete: SetNull)
+
+  // Snapshots, all taken at submit time.
+  code        String?
+  name        String
+  vendor      String?
+  unit        String?
+  /// What the buyer was charged per unit. Dealer price for a dealer order,
+  /// cost for an internal one.
+  unitCents   Int?
+  quantity    Int
+
+  createdAt DateTime @default(now())
+
+  @@index([shipmentId])
+  @@index([partId])
+}
+
+/// A dealer's in-progress cart. One open cart per user; survives logout so a
+/// dealer can build an order across a week without losing it.
+model CartLine {
+  id       String @id @default(cuid())
+  userId   String
+  partId   String
+  quantity Int    @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, partId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Settings, pricing rules and audit
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One row. How a dealer price is derived when a part has no explicit override.
+///
+/// Four mechanisms, most specific wins:
+///   1. Part.dealerCents with priceOverridden = true  (hand-set)
+///   2. PriceRule for the part's category or vendor    (targeted markup)
+///   3. defaultMarkupPct                               (catalogue-wide)
+///   4. none of the above -> "call for pricing"
+model PricingSettings {
+  id String @id @default("default")
+
+  /// Catalogue-wide markup over cost, in percent. 35 = cost x 1.35.
+  defaultMarkupPct Int @default(35)
+
+  /// Master switch. While false, dealers see "call for pricing" everywhere
+  /// instead of a derived number. Defaults to FALSE so a markup nobody has
+  /// confirmed yet can never be quoted to a dealer as though it were real.
+  pricesVisibleToDealers Boolean @default(false)
+
+  /// Round derived prices to the nearest cent value, e.g. 5 = nearest nickel.
+  roundToCents Int @default(1)
+
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+}
+
+enum PriceRuleScope {
+  CATEGORY
+  VENDOR
+  SEGMENT
+  TIER
+}
+
+/// A targeted markup — "everything from Watergroup is +28%", "Demo Materials
+/// are +15%", "PREMIUM tier gets +20% on everything".
+model PriceRule {
+  id     String         @id @default(cuid())
+  scope  PriceRuleScope
+  /// The category id, vendor name, segment code or tier name this applies to.
+  target String
+  markupPct Int
+  /// Higher wins when two rules both match.
+  priority  Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, target])
+  @@index([active])
+}
+
+/// Where fulfillment email goes, per party. Head office has one address; each
+/// drop-ship vendor has its own.
+model FulfillmentContact {
+  id          String   @id @default(cuid())
+  /// "HEAD_OFFICE" or the exact vendor name as it appears on parts.
+  party       String   @unique
+  email       String
+  ccEmail     String?
+  /// Skip emailing this party — orders still record the shipment.
+  muted       Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  at         DateTime @default(now())
+  actorId    String?
+  actorName  String?
+  action     String
+  entity     String
+  entityId   String?
+  detail     String?
+
+  @@index([at])
+  @@index([entity, entityId])
+}
+
+/// One run of the catalogue importer. Kept so a re-import can be compared
+/// against the last one, and so a bad price list can be traced.
+model ImportRun {
+  id        String   @id @default(cuid())
+  fileName  String
+  startedAt DateTime @default(now())
+  finishedAt DateTime?
+  dryRun    Boolean  @default(true)
+  rowsRead  Int      @default(0)
+  created   Int      @default(0)
+  updated   Int      @default(0)
+  skipped   Int      @default(0)
+  /// Row-level problems, newline-joined, with row numbers. Never silently drop.
+  problems  String?
+  actorName String?
+
+  @@index([startedAt])
+}
