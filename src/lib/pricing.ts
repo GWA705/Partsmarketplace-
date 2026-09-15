@@ -103,7 +103,12 @@ export function dealerPrice(
   if (part.priceOverridden && part.dealerCents !== null) return part.dealerCents;
   if (!ctx.settings.pricesVisibleToDealers) return null;
   if (part.dealerCents !== null) return part.dealerCents;
-  if (part.costCents === null) return null;
+  // A cost of zero is not a free part. 68 rows in the seed price list carry 0 —
+  // circuit boards, HEPA wiring — where the cell was simply never filled in.
+  // Marking one up gives $0.00, which a dealer would reasonably read as free
+  // and order. No cost on file means no derived price, so it reads "call for
+  // pricing" until someone sets one by hand.
+  if (part.costCents === null || part.costCents === 0) return null;
   return applyMarkup(part.costCents, markupFor(part, tier, ctx), ctx.settings.roundToCents);
 }
 
@@ -115,7 +120,8 @@ export function dealerPrice(
 export async function recomputeDealerPrices(tier = 'STANDARD'): Promise<number> {
   const ctx = await loadPricingContext();
   const parts = await prisma.part.findMany({
-    where: { priceOverridden: false, costCents: { not: null } },
+    // Zero is "never priced", not "free" — see dealerPrice. Nothing to derive.
+    where: { priceOverridden: false, costCents: { not: null, gt: 0 } },
     select: {
       id: true,
       costCents: true,

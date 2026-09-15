@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * One palette, defined once, in both themes. A parts desk is often a bright
+ * warehouse or a dim back office, so the dark mode is a real mode rather than
+ * an inverted afterthought.
+ */
+:root {
+  --canvas: #f6f7f9;
+  --surface: #ffffff;
+  --line: #e3e6ea;
+  --ink: #16191d;
+  --muted: #646b76;
+  --accent: #0e2b5c;
+  --accent-ink: #ffffff;
+  --radius: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --canvas: #0e1116;
+    --surface: #161a20;
+    --line: #272d36;
+    --ink: #e8eaed;
+    --muted: #9aa3af;
+    --accent: #5b8dd9;
+    --accent-ink: #0b0e12;
+  }
+}
+
+:root[data-theme='dark'] {
+  --canvas: #0e1116;
+  --surface: #161a20;
+  --line: #272d36;
+  --ink: #e8eaed;
+  --muted: #9aa3af;
+  --accent: #5b8dd9;
+  --accent-ink: #0b0e12;
+}
+
+html, body {
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+body {
+  font-feature-settings: 'tnum' 1; /* aligned digits in price and qty columns */
+}
+
+@layer components {
+  .card {
+    @apply bg-surface border border-line rounded;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 rounded border border-line
+           text-sm font-medium bg-surface hover:bg-canvas transition-colors
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+    @apply border-transparent hover:opacity-90;
+  }
+  .input {
+    @apply w-full px-3 py-2 rounded border border-line bg-surface text-ink text-sm
+           placeholder:text-muted focus:outline-none focus:ring-2;
+  }
+  .input:focus {
+    --tw-ring-color: var(--accent);
+  }
+  .label {
+    @apply block text-xs font-semibold uppercase tracking-wide text-muted mb-1;
+  }
+  /* Codes and prices are compared by eye down a column; they need to line up. */
+  .tabular {
+    @apply font-mono text-[13px];
+    font-variant-numeric: tabular-nums;
+  }
+}

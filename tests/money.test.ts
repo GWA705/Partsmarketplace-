@@ -43,3 +43,49 @@ describe('formatCents', () => {
     expect(formatCents(0)).toContain('0.00');
   });
 });
+
+/**
+ * Zero cost is the trap in this price list: 68 seed rows carry 0 in the price
+ * column — a 400T main circuit board among them — because the cell was never
+ * filled in, not because the part is free.
+ */
+import { dealerPrice } from '@/lib/pricing';
+
+describe('dealerPrice', () => {
+  const ctx = {
+    settings: { defaultMarkupPct: 35, pricesVisibleToDealers: true, roundToCents: 1 },
+    rules: [],
+  };
+  const base = {
+    dealerCents: null,
+    priceOverridden: false,
+    categoryId: null,
+    vendor: null,
+    segmentCode: null,
+  };
+
+  it('never quotes a zero-cost part as free', () => {
+    expect(dealerPrice({ ...base, costCents: 0 }, 'STANDARD', ctx)).toBeNull();
+  });
+
+  it('marks up a real cost', () => {
+    expect(dealerPrice({ ...base, costCents: 1000 }, 'STANDARD', ctx)).toBe(1350);
+  });
+
+  it('says nothing when there is no cost at all', () => {
+    expect(dealerPrice({ ...base, costCents: null }, 'STANDARD', ctx)).toBeNull();
+  });
+
+  it('hides derived prices while the switch is off', () => {
+    const off = { ...ctx, settings: { ...ctx.settings, pricesVisibleToDealers: false } };
+    expect(dealerPrice({ ...base, costCents: 1000 }, 'STANDARD', off)).toBeNull();
+  });
+
+  it('still shows a hand-set price while the switch is off', () => {
+    // Somebody typed this deliberately, so it is not a guess to withhold.
+    const off = { ...ctx, settings: { ...ctx.settings, pricesVisibleToDealers: false } };
+    expect(
+      dealerPrice({ ...base, costCents: 0, dealerCents: 4999, priceOverridden: true }, 'STANDARD', off),
+    ).toBe(4999);
+  });
+});
