@@ -24,6 +24,8 @@ export default async function AdminPage() {
       prisma.importRun.findFirst({ orderBy: { startedAt: 'desc' } }),
     ]);
 
+  const taxOn = settings.chargeTax && !!settings.gstNumber;
+
   const cards = [
     {
       href: '/admin/segments',
@@ -41,6 +43,12 @@ export default async function AdminPage() {
     },
     { href: '/admin/dealers', title: 'Dealers', body: `${dealers} active`, urgent: false },
     {
+      href: '/admin/tax',
+      title: 'Sales tax',
+      body: taxOn ? `Charging, by ship-to province` : 'Not charging tax yet',
+      urgent: !taxOn,
+    },
+    {
       href: '/admin/fulfillment',
       title: 'Fulfillment contacts',
       body: 'Who gets each pick list',
@@ -57,8 +65,6 @@ export default async function AdminPage() {
           defaultMarkupPct={settings.defaultMarkupPct}
           roundToCents={settings.roundToCents}
           pricesVisibleToDealers={settings.pricesVisibleToDealers}
-          taxRatePct={settings.taxRatePct}
-          taxNote={settings.taxNote}
           pricedParts={pricedParts}
           overriddenParts={overridden}
         />

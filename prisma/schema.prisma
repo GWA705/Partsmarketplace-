@@ -101,6 +101,18 @@ model Dealer {
   /// Dealer-specific notes for whoever fills their orders.
   fulfillmentNote String?
 
+  // ── Tax status ──
+  // Two separate flags because they are two different exemptions. A dealer
+  // buying for resale is commonly exempt from the PROVINCIAL tax and is still
+  // charged GST/HST, which they recover as an input tax credit. Treating
+  // "resale" as exempt from everything under-collects federal tax.
+  /// Rare — status Indian, diplomatic, or an export sale.
+  gstExempt        Boolean @default(false)
+  /// The common one: a resale certificate for the province's own tax.
+  provincialExempt Boolean @default(false)
+  /// Their exemption or PST registration number, printed on the invoice.
+  taxExemptNumber  String?
+
   active     Boolean @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -334,12 +346,22 @@ model Order {
   billCountry  String?
   billEmail    String?
 
+  // ── Money, frozen at submit ──
+  // Totals are stored rather than recalculated on every read. A price list or
+  // a tax rate changing must not restate an order that has already gone out.
+  subtotalCents Int  @default(0)
+  taxTotalCents Int  @default(0)
+  totalCents    Int  @default(0)
+  /// The province the tax was worked out from — the ship-to, not ours.
+  taxRegionCode String?
+
   status      OrderStatus @default(SUBMITTED)
   submittedAt DateTime    @default(now())
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
   shipments Shipment[]
+  taxes     OrderTax[]
 
   @@index([dealerId, submittedAt])
   @@index([status])
@@ -451,13 +473,16 @@ model PricingSettings {
   /// Round derived prices to the nearest cent value, e.g. 5 = nearest nickel.
   roundToCents Int @default(1)
 
-  /// Sales tax shown on an invoice, in percent. Defaults to 0 — an invoice
-  /// that quietly invents a tax line is worse than one that shows none, so
-  /// this stays off until somebody sets it deliberately. Ontario HST is 13,
-  /// but a resale-exempt dealer is 0, which is why it is not assumed.
-  taxRatePct Int @default(0)
-  /// Printed under the tax line, e.g. "HST #12345 6789 RT0001".
-  taxNote    String?
+  // ── Sales tax ──
+  // Rates are not set here; they are calculated from where the goods ship
+  // (see TaxRegion and lib/tax.ts). What lives here is who WE are to the CRA.
+  /// Master switch. Off until the registration number below is filled in —
+  /// charging tax without showing a registration number is not a valid invoice.
+  chargeTax     Boolean @default(false)
+  /// Our GST/HST registration, printed on every invoice that charges it.
+  gstNumber     String?
+  /// Quebec QST registration, if we have one.
+  qstNumber     String?
 
   updatedAt   DateTime @updatedAt
   updatedById String?
@@ -500,6 +525,71 @@ model FulfillmentContact {
   muted       Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sales tax
+//
+// Canadian sales tax follows the SHIP-TO province, not ours. Ontario is a
+// single HST line; British Columbia is GST plus a separate provincial line;
+// Alberta is GST alone. An invoice has to show the components separately
+// wherever they are separate taxes, so they are modelled separately.
+//
+// Rates live in the database, not in code. They move — Nova Scotia dropped
+// from 15% to 14% in April 2025 — and a rate change should be a field edit,
+// not a deploy.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// One province or territory, and what it charges.
+///
+/// Rates are held in THOUSANDTHS OF A PERCENT so every one of them is an exact
+/// integer: 13% is 13000, and Quebec's 9.975% is 9975. Storing 9.975 as a
+/// float and multiplying it by a total is how an invoice ends up a cent out.
+model TaxRegion {
+  /// Two-letter province code: ON, BC, QC…
+  code  String @id
+  label String
+
+  /// Harmonised sales tax, where the province uses one. Mutually exclusive
+  /// with the gst/provincial pair below.
+  hstThou Int?
+
+  /// Federal GST, in provinces that have not harmonised.
+  gstThou Int?
+
+  /// The province's own tax, and what it is called there — PST in BC and SK,
+  /// RST in Manitoba, QST in Quebec.
+  provincialThou  Int?
+  provincialLabel String?
+
+  /// Whether WE are registered to collect this province's own tax. GST/HST is
+  /// charged on every Canadian sale once registered federally; a provincial
+  /// tax is only charged by a business registered in that province, so
+  /// charging it everywhere by default would over-collect.
+  collectProvincial Boolean @default(false)
+
+  active    Boolean  @default(true)
+  note      String?
+  updatedAt DateTime @updatedAt
+}
+
+/// A tax line as it was charged, frozen onto the order.
+///
+/// Snapshotted rather than recomputed at print time: a rate change next April
+/// must not quietly restate what last month's invoice said.
+model OrderTax {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /// What prints: "HST 13%", "GST 5%", "PST 7%".
+  label       String
+  rateThou    Int
+  amountCents Int
+  sortOrder   Int @default(0)
+
+  @@index([orderId])
 }
 
 model AppSetting {

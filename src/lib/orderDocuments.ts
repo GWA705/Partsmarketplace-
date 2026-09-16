@@ -32,6 +32,7 @@ export async function loadOrderDocument(opts: LoadOptions): Promise<DocOrder | n
     where: { id: opts.orderId },
     include: {
       dealer: true,
+      taxes: { orderBy: { sortOrder: 'asc' } },
       shipments: { include: { lines: { include: { part: { select: { catalogueCode: true, segment: { select: { label: true, code: true } } } } } } } },
     },
   });
@@ -102,8 +103,19 @@ export async function loadOrderDocument(opts: LoadOptions): Promise<DocOrder | n
       email: order.billEmail ?? dealer?.billEmail ?? dealer?.contactEmail ?? null,
     },
     lines,
-    taxRatePct: settings?.taxRatePct ?? 0,
-    taxNote: settings?.taxNote ?? null,
+    // The frozen lines, not a fresh calculation: the invoice has to keep
+    // saying what it said when it went out.
+    taxLines: order.taxes.map((t) => ({ label: t.label, amountCents: t.amountCents })),
+    taxNumbers: order.taxes.length
+      ? [
+          settings?.gstNumber ? `GST/HST ${settings.gstNumber}` : null,
+          settings?.qstNumber ? `QST ${settings.qstNumber}` : null,
+        ]
+      : [],
+    exemptionNote:
+      dealer && (dealer.gstExempt || dealer.provincialExempt) && dealer.taxExemptNumber
+        ? `Tax exemption ${dealer.taxExemptNumber}`
+        : null,
   };
 }
 

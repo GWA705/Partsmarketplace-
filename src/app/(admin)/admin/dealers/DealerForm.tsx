@@ -75,6 +75,39 @@ export default function DealerForm() {
 
       <fieldset className="border border-line rounded p-3 space-y-3">
         <legend className="text-xs font-semibold uppercase tracking-wide text-muted px-1">
+          Tax status
+        </legend>
+        <p className="text-[11px] text-muted">
+          Tax is worked out from their shipping province. These are the exceptions.
+        </p>
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" name="provincialExempt" className="mt-0.5" />
+          <span>
+            Provincial tax exemption (resale)
+            <span className="block text-[11px] text-muted">
+              The common one. They still pay GST/HST and recover it as an input tax credit.
+            </span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" name="gstExempt" className="mt-0.5" />
+          <span>
+            GST/HST exempt
+            <span className="block text-[11px] text-muted">
+              Rare — status Indian, diplomatic, or an export sale.
+            </span>
+          </span>
+        </label>
+        <input
+          name="taxExemptNumber"
+          placeholder="Exemption / PST number — prints on the invoice"
+          className="input tabular"
+          aria-label="Tax exemption number"
+        />
+      </fieldset>
+
+      <fieldset className="border border-line rounded p-3 space-y-3">
+        <legend className="text-xs font-semibold uppercase tracking-wide text-muted px-1">
           Their login (optional)
         </legend>
         <div className="grid sm:grid-cols-2 gap-3">

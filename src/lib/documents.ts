@@ -52,8 +52,12 @@ export interface DocOrder {
   /** "Head office", a supplier's name, or "Ships direct" — audience decides. */
   fulfilledByLabel?: string | null;
   lines: DocLine[];
-  taxRatePct?: number;
-  taxNote?: string | null;
+  /** Tax exactly as it was charged, frozen onto the order at submit. */
+  taxLines?: { label: string; amountCents: number }[];
+  /** Our GST/HST and QST registrations — an invoice charging tax needs them. */
+  taxNumbers?: (string | null | undefined)[];
+  /** The dealer's exemption number, when they claimed one. */
+  exemptionNote?: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -210,17 +214,31 @@ export async function buildInvoice(
     };
 
     line('Subtotal', formatCents(subtotal));
-    const rate = order.taxRatePct ?? 0;
-    const tax = rate > 0 ? Math.round((subtotal * rate) / 100) : 0;
-    if (rate > 0) line(`Tax (${rate}%)`, formatCents(tax));
+
+    // Each tax is its own line. In a non-harmonised province GST and PST are
+    // two different taxes remitted to two different governments, and an
+    // invoice that blends them into one number is not a usable record for
+    // either side.
+    const taxes = order.taxLines ?? [];
+    for (const t of taxes) line(t.label, formatCents(t.amountCents));
+    const tax = taxes.reduce((sum, t) => sum + t.amountCents, 0);
+
     s.y -= 2;
     rule(s, 0.8, hair, labelX, RIGHT);
     s.y -= 14;
     line('Total', formatCents(subtotal + tax), true);
 
-    if (order.taxNote) {
-      textAt(s, order.taxNote, labelX, s.y, 7.5, s.font, gray);
-      s.y -= 12;
+    // Registration numbers only where tax was actually charged. Printing them
+    // under an untaxed total implies tax was collected when it was not.
+    if (taxes.length > 0) {
+      for (const n of (order.taxNumbers ?? []).filter(Boolean)) {
+        textAt(s, n as string, labelX, s.y, 7.5, s.font, gray);
+        s.y -= 11;
+      }
+    }
+    if (order.exemptionNote) {
+      textAt(s, order.exemptionNote, labelX, s.y, 7.5, s.font, gray);
+      s.y -= 11;
     }
     const unpriced = order.lines.filter((l) => l.unitCents === null).length;
     if (unpriced > 0) {

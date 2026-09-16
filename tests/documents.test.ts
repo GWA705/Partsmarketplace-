@@ -49,8 +49,8 @@ const order: DocOrder = {
     { code: '6001.HD', name: 'HD APRONS', unit: 'each (ea)', quantity: 2, unitCents: 2700, location: 'Home Depot' },
     { code: '012.H2O', name: 'TDS Meters', unit: null, quantity: 1, unitCents: 2700, location: 'Water Treatment' },
   ],
-  taxRatePct: 13,
-  taxNote: 'HST #12345 6789 RT0001',
+  taxLines: [{ label: 'HST 13%', amountCents: 9065 }],
+  taxNumbers: ['GST/HST 12345 6789 RT0001'],
 };
 
 describe('invoice', () => {
@@ -71,15 +71,33 @@ describe('invoice', () => {
     const t = await text(await buildInvoice(order, { priced: true }));
     // 6 x 6.43 + 2 x 27.00 + 1 x 27.00 = 119.58; +13% = 135.13
     expect(t).toContain('$119.58');
-    expect(t).toContain('Tax (13%)');
-    expect(t).toContain('$135.13');
-    expect(t).toContain('HST #12345 6789 RT0001');
+    expect(t).toContain('HST 13%');
+    expect(t).toContain('$90.65');
+    expect(t).toContain('$210.23');
+    expect(t).toContain('GST/HST 12345 6789 RT0001');
   });
 
-  it('shows no tax line at all when the rate is zero', async () => {
-    const t = await text(await buildInvoice({ ...order, taxRatePct: 0 }, { priced: true }));
-    expect(t).not.toContain('Tax (');
+  it('shows no tax line at all when nothing is charged', async () => {
+    const t = await text(await buildInvoice({ ...order, taxLines: [] }, { priced: true }));
+    expect(t).not.toContain('HST');
     expect(t).toContain('$119.58');
+  });
+
+  it('prints GST and PST as separate lines where they are separate taxes', async () => {
+    const bc = {
+      ...order,
+      taxLines: [
+        { label: 'GST 5%', amountCents: 598 },
+        { label: 'PST 7%', amountCents: 837 },
+      ],
+    };
+    const t = await text(await buildInvoice(bc, { priced: true }));
+    expect(t).toContain('GST 5%');
+    expect(t).toContain('PST 7%');
+    expect(t).toContain('$5.98');
+    expect(t).toContain('$8.37');
+    // 119.58 + 5.98 + 8.37
+    expect(t).toContain('$133.93');
   });
 
   it('prints as an unpriced confirmation when pricing is not settled', async () => {

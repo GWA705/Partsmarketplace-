@@ -4,6 +4,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { SEED_REGIONS } from '../src/lib/tax';
 
 const prisma = new PrismaClient();
 
@@ -62,7 +63,26 @@ async function main() {
     create: { party: 'HEAD_OFFICE', email: 'parts@ghsbarrie.ca' },
   });
 
-  console.log('seeded: dealer + staff admin (password: demo-password-1234)');
+  // Rates as of this build. Upserted so a re-seed never overwrites a
+  // correction somebody made in admin — only the untouched fields are filled.
+  for (const r of SEED_REGIONS) {
+    await prisma.taxRegion.upsert({
+      where: { code: r.code },
+      update: {},
+      create: {
+        code: r.code,
+        label: r.label,
+        hstThou: r.hstThou,
+        gstThou: r.gstThou,
+        provincialThou: r.provincialThou,
+        provincialLabel: r.provincialLabel,
+        collectProvincial: r.collectProvincial,
+        note: r.note ?? null,
+      },
+    });
+  }
+
+  console.log(`seeded: dealer + staff admin (password: demo-password-1234), ${SEED_REGIONS.length} tax regions`);
 }
 
 main()

@@ -25,17 +25,12 @@ export async function savePricing(_prev: ActionState, formData: FormData): Promi
   const markup = Number(formData.get('defaultMarkupPct'));
   const roundTo = Number(formData.get('roundToCents'));
   const visible = formData.get('pricesVisibleToDealers') === 'on';
-  const taxRate = Number(formData.get('taxRatePct') ?? 0);
-  const taxNote = String(formData.get('taxNote') ?? '').trim() || null;
 
   if (!Number.isFinite(markup) || markup < 0 || markup > 1000) {
     return { error: 'Markup must be between 0 and 1000 percent.' };
   }
   if (!Number.isFinite(roundTo) || roundTo < 1 || roundTo > 500) {
     return { error: 'Rounding must be between 1 and 500 cents.' };
-  }
-  if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
-    return { error: 'Tax must be between 0 and 100 percent.' };
   }
 
   await prisma.pricingSettings.upsert({
@@ -44,8 +39,6 @@ export async function savePricing(_prev: ActionState, formData: FormData): Promi
       defaultMarkupPct: Math.round(markup),
       roundToCents: Math.round(roundTo),
       pricesVisibleToDealers: visible,
-      taxRatePct: Math.round(taxRate),
-      taxNote,
       updatedById: user.userId,
     },
     create: {
@@ -53,8 +46,6 @@ export async function savePricing(_prev: ActionState, formData: FormData): Promi
       defaultMarkupPct: Math.round(markup),
       roundToCents: Math.round(roundTo),
       pricesVisibleToDealers: visible,
-      taxRatePct: Math.round(taxRate),
-      taxNote,
       updatedById: user.userId,
     },
   });
@@ -227,6 +218,9 @@ export async function createDealer(_prev: ActionState, formData: FormData): Prom
       billCity: String(formData.get('billCity') ?? '').trim() || null,
       billProvince: String(formData.get('billProvince') ?? '').trim() || null,
       billPostal: String(formData.get('billPostal') ?? '').trim() || null,
+      gstExempt: formData.get('gstExempt') === 'on',
+      provincialExempt: formData.get('provincialExempt') === 'on',
+      taxExemptNumber: String(formData.get('taxExemptNumber') ?? '').trim() || null,
     },
   });
 
@@ -409,4 +403,79 @@ export async function savePart(_prev: ActionState, formData: FormData): Promise<
     tags,
     fitsSkus,
   });
+}
+
+// ── Sales tax ────────────────────────────────────────────────────────────────
+
+/**
+ * Who we are to the CRA. The rates themselves are not set here — they come
+ * from the ship-to province (see saveTaxRegion below and lib/tax.ts).
+ */
+export async function saveTaxRegistration(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireAdmin();
+
+  const gstNumber = String(formData.get('gstNumber') ?? '').trim() || null;
+  const qstNumber = String(formData.get('qstNumber') ?? '').trim() || null;
+  const chargeTax = formData.get('chargeTax') === 'on';
+
+  // An invoice that charges tax without showing a registration number is not
+  // a valid one, so the switch cannot be turned on without the number.
+  if (chargeTax && !gstNumber) {
+    return { error: 'Enter your GST/HST number before charging tax — it has to print on the invoice.' };
+  }
+
+  await prisma.pricingSettings.upsert({
+    where: { id: 'default' },
+    update: { chargeTax, gstNumber, qstNumber, updatedById: user.userId },
+    create: { id: 'default', chargeTax, gstNumber, qstNumber, updatedById: user.userId },
+  });
+
+  await audit({
+    actorId: user.userId,
+    actorName: user.name,
+    action: 'tax.registration',
+    entity: 'PricingSettings',
+    detail: `chargeTax=${chargeTax}`,
+  });
+
+  revalidatePath('/admin/tax');
+  revalidatePath('/admin');
+  return { ok: true, message: chargeTax ? 'Tax is being charged by ship-to province.' : 'Tax is off — invoices show no tax line.' };
+}
+
+/** Correct one province's rates, or say we are registered to collect there. */
+export async function saveTaxRegion(
+  code: string,
+  data: {
+    hstThou?: number | null;
+    gstThou?: number | null;
+    provincialThou?: number | null;
+    provincialLabel?: string | null;
+    collectProvincial?: boolean;
+  },
+): Promise<ActionState> {
+  const user = await requireAdmin();
+
+  for (const v of [data.hstThou, data.gstThou, data.provincialThou]) {
+    if (v !== undefined && v !== null && (!Number.isFinite(v) || v < 0 || v > 100_000)) {
+      return { error: 'A rate must be between 0 and 100 percent.' };
+    }
+  }
+
+  await prisma.taxRegion.update({ where: { code }, data });
+
+  await audit({
+    actorId: user.userId,
+    actorName: user.name,
+    action: 'tax.region',
+    entity: 'TaxRegion',
+    entityId: code,
+    detail: JSON.stringify(data),
+  });
+
+  revalidatePath('/admin/tax');
+  return { ok: true };
 }

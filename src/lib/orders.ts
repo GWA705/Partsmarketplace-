@@ -6,6 +6,7 @@ import { buildPickList, buildInvoice } from '@/lib/documents';
 import { loadOrderDocument, documentFilename } from '@/lib/orderDocuments';
 import { loadPricingContext, dealerPrice } from '@/lib/pricing';
 import { formatCents } from '@/lib/money';
+import { calculateTax, taxTotal, provinceCode } from '@/lib/tax';
 import type { SessionUser } from '@/lib/session';
 import type { FulfilledBy } from '@prisma/client';
 
@@ -112,6 +113,48 @@ export async function submitOrder(opts: {
     groups.set(key, g);
   }
 
+  // ── Price the order, then freeze it ──
+  // Line prices, tax and total are all stored. A price list or a tax rate
+  // changing next month must not restate what this order said today.
+  const priceOf = (p: (typeof parts)[number]): number | null =>
+    isDealer
+      ? dealerPrice(
+          {
+            costCents: p.costCents,
+            dealerCents: p.dealerCents,
+            priceOverridden: p.priceOverridden,
+            categoryId: p.categoryId,
+            vendor: p.vendor,
+            segmentCode: p.segmentCode,
+          },
+          user.dealerTier,
+          ctx,
+        )
+      : p.costCents;
+
+  const subtotalCents = entries.reduce((sum, e) => {
+    const p = byId.get(e.partId)!;
+    const unit = priceOf(p);
+    return unit === null ? sum : sum + unit * e.quantity;
+  }, 0);
+
+  // Tax follows where the goods go, not where we are. An internal order is
+  // not a sale, so it is not taxed.
+  const settings = await prisma.pricingSettings.findUnique({ where: { id: 'default' } });
+  const regionCode = isDealer ? provinceCode(dealer?.shipProvince) : null;
+  const region = regionCode
+    ? await prisma.taxRegion.findUnique({ where: { code: regionCode } })
+    : null;
+
+  const taxLines = calculateTax({
+    subtotalCents,
+    region: region && region.active ? region : null,
+    chargeTax: !!settings?.chargeTax && !!settings?.gstNumber,
+    gstExempt: dealer?.gstExempt,
+    provincialExempt: dealer?.provincialExempt,
+  });
+  const taxCents = taxTotal(taxLines);
+
   const number = await nextOrderNumber();
 
   const order = await prisma.order.create({
@@ -124,6 +167,11 @@ export async function submitOrder(opts: {
       jobRef: isDealer ? null : opts.jobRef ?? null,
       note: opts.note ?? null,
       rush: !!opts.rush,
+      subtotalCents,
+      taxTotalCents: taxCents,
+      totalCents: subtotalCents + taxCents,
+      taxRegionCode: regionCode,
+      taxes: { create: taxLines },
       // Snapshot the address: a dealer moving next year must not rewrite this.
       shipName: dealer?.shipAttn || dealer?.name || null,
       shipLine1: dealer?.shipLine1 ?? null,
@@ -151,21 +199,9 @@ export async function submitOrder(opts: {
           lines: {
             create: g.entries.map((e) => {
               const p = byId.get(e.partId)!;
-              // A dealer is charged their price; an internal order is costed.
-              const unitCents = isDealer
-                ? dealerPrice(
-                    {
-                      costCents: p.costCents,
-                      dealerCents: p.dealerCents,
-                      priceOverridden: p.priceOverridden,
-                      categoryId: p.categoryId,
-                      vendor: p.vendor,
-                      segmentCode: p.segmentCode,
-                    },
-                    user.dealerTier,
-                    ctx,
-                  )
-                : p.costCents;
+              // Same function that built the subtotal — one definition of what
+              // a line costs, so the lines and the total cannot disagree.
+              const unitCents = priceOf(p);
               return {
                 partId: p.id,
                 code: p.code,
