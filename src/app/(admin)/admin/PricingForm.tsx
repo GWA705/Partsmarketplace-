@@ -16,12 +16,16 @@ export default function PricingForm({
   defaultMarkupPct,
   roundToCents,
   pricesVisibleToDealers,
+  taxRatePct,
+  taxNote,
   pricedParts,
   overriddenParts,
 }: {
   defaultMarkupPct: number;
   roundToCents: number;
   pricesVisibleToDealers: boolean;
+  taxRatePct: number;
+  taxNote: string | null;
   pricedParts: number;
   overriddenParts: number;
 }) {
@@ -72,6 +76,40 @@ export default function PricingForm({
             <span className="text-sm text-muted">cents</span>
           </div>
           <p className="text-[11px] text-muted mt-1">5 rounds to the nickel, 100 to the dollar.</p>
+        </div>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-4 border-t border-line pt-4">
+        <div>
+          <label className="label" htmlFor="taxRatePct">Sales tax on invoices</label>
+          <div className="flex items-center gap-2">
+            <input
+              id="taxRatePct"
+              name="taxRatePct"
+              type="number"
+              min={0}
+              max={100}
+              defaultValue={taxRatePct}
+              className="input tabular"
+            />
+            <span className="text-sm text-muted">%</span>
+          </div>
+          <p className="text-[11px] text-muted mt-1">
+            0 shows no tax line at all. Ontario HST is 13 — but a resale-exempt dealer is 0,
+            which is why nothing is assumed here.
+          </p>
+        </div>
+
+        <div>
+          <label className="label" htmlFor="taxNote">Tax registration line</label>
+          <input
+            id="taxNote"
+            name="taxNote"
+            defaultValue={taxNote ?? ''}
+            placeholder="HST #12345 6789 RT0001"
+            className="input"
+          />
+          <p className="text-[11px] text-muted mt-1">Printed under the tax line on an invoice.</p>
         </div>
       </div>
 

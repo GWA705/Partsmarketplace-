@@ -50,7 +50,14 @@ export default async function OrderPage({
 
       <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
         <div>
-          <h1 className="text-lg font-semibold tabular">{order.number}</h1>
+          <h1 className="text-lg font-semibold tabular flex items-center gap-2">
+            {order.number}
+            {order.rush ? (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white">
+                Rush
+              </span>
+            ) : null}
+          </h1>
           <p className="text-sm text-muted">
             {order.submittedAt.toLocaleString('en-CA', {
               year: 'numeric', month: 'long', day: 'numeric',
@@ -60,7 +67,10 @@ export default async function OrderPage({
             {order.jobRef ? ` · job ${order.jobRef}` : ''}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <a href={`/api/orders/${order.id}/invoice`} className="btn text-sm" target="_blank" rel="noreferrer">
+            Invoice PDF
+          </a>
           <ReorderButton orderId={order.id} />
           <Link href="/orders" className="btn text-sm">All orders</Link>
         </div>
@@ -86,8 +96,13 @@ export default async function OrderPage({
                     {s.trackingRef ? ` · ${s.trackingRef}` : ''}
                   </p>
                 </div>
-                <span className="text-sm tabular font-semibold">
-                  {subtotal > 0 ? formatCents(subtotal) : ''}
+                <span className="flex items-center gap-2">
+                  <span className="text-sm tabular font-semibold">
+                    {subtotal > 0 ? formatCents(subtotal) : ''}
+                  </span>
+                  <a href={`/api/shipments/${s.id}/slip`} className="btn py-1 px-2 text-xs" target="_blank" rel="noreferrer">
+                    Packing slip
+                  </a>
                 </span>
               </header>
 

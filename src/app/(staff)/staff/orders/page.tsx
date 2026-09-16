@@ -29,7 +29,9 @@ export default async function StaffOrdersPage({
           ? { fulfilledBy: 'SUPPLIER' }
           : {}),
     },
-    orderBy: { createdAt: 'desc' },
+    // Rush first, then oldest first inside each band: a rush order jumps the
+    // queue, and everything else is worked in the order it came in.
+    orderBy: [{ order: { rush: 'desc' } }, { createdAt: 'asc' }],
     take: 200,
     include: { order: { include: { dealer: true } }, lines: true },
   });
@@ -75,6 +77,11 @@ export default async function StaffOrdersPage({
                     {s.order.dealer?.name ?? 'GWA internal'}
                     {s.order.jobRef ? ` · ${s.order.jobRef}` : ''}
                   </span>
+                  {s.order.rush ? (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white">
+                      Rush
+                    </span>
+                  ) : null}
                   <span className="text-xs text-muted">
                     {label} · {s.shippingMethod ?? 'no shipping method'} · {pieces} pieces
                   </span>
@@ -88,8 +95,14 @@ export default async function StaffOrdersPage({
                   ) : null}
                   <span className="ml-auto flex items-center gap-2">
                     <span className="text-sm tabular">{subtotal > 0 ? formatCents(subtotal) : ''}</span>
-                    <a href={`/api/shipments/${s.id}/slip`} className="btn py-1 px-2 text-xs">
+                    <a href={`/api/shipments/${s.id}/pick`} className="btn btn-primary py-1 px-2 text-xs" target="_blank" rel="noreferrer">
                       Pick list
+                    </a>
+                    <a href={`/api/shipments/${s.id}/slip`} className="btn py-1 px-2 text-xs" target="_blank" rel="noreferrer">
+                      Slip
+                    </a>
+                    <a href={`/api/orders/${s.orderId}/invoice`} className="btn py-1 px-2 text-xs" target="_blank" rel="noreferrer">
+                      Invoice
                     </a>
                     <ShipmentStatusControl shipmentId={s.id} status={s.status} />
                   </span>

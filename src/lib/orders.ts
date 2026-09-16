@@ -2,7 +2,8 @@ import 'server-only';
 import { prisma } from '@/lib/db';
 import { audit } from '@/lib/audit';
 import { sendEmail } from '@/lib/email';
-import { buildPackingSlip, type PackingSlipLine } from '@/lib/orderPdf';
+import { buildPickList, buildInvoice } from '@/lib/documents';
+import { loadOrderDocument, documentFilename } from '@/lib/orderDocuments';
 import { loadPricingContext, dealerPrice } from '@/lib/pricing';
 import { formatCents } from '@/lib/money';
 import type { SessionUser } from '@/lib/session';
@@ -64,6 +65,8 @@ export async function submitOrder(opts: {
   entries: CartEntry[];
   shippingMethod?: string | null;
   note?: string | null;
+  /** Ahead of everything else in the warehouse. Shouts on every document. */
+  rush?: boolean;
   /** Internal orders only: the portal's service job number. */
   jobRef?: string | null;
 }): Promise<SubmitResult> {
@@ -120,6 +123,7 @@ export async function submitOrder(opts: {
       placedByName: user.name,
       jobRef: isDealer ? null : opts.jobRef ?? null,
       note: opts.note ?? null,
+      rush: !!opts.rush,
       // Snapshot the address: a dealer moving next year must not rewrite this.
       shipName: dealer?.shipAttn || dealer?.name || null,
       shipLine1: dealer?.shipLine1 ?? null,
@@ -129,6 +133,16 @@ export async function submitOrder(opts: {
       shipPostal: dealer?.shipPostal ?? null,
       shipCountry: dealer?.shipCountry ?? null,
       shipPhone: dealer?.phone ?? null,
+      // Bill-to snapshot. Blank here means "same as shipping", which the
+      // document loader resolves — the fallback lives in one place.
+      billName: dealer?.billAttn ?? dealer?.name ?? null,
+      billLine1: dealer?.billLine1 ?? null,
+      billLine2: dealer?.billLine2 ?? null,
+      billCity: dealer?.billCity ?? null,
+      billProvince: dealer?.billProvince ?? null,
+      billPostal: dealer?.billPostal ?? null,
+      billCountry: dealer?.billCountry ?? null,
+      billEmail: dealer?.billEmail ?? dealer?.contactEmail ?? null,
       shipments: {
         create: [...groups.values()].map((g) => ({
           fulfilledBy: g.fulfilledBy,
@@ -193,45 +207,25 @@ export async function submitOrder(opts: {
       continue;
     }
 
-    const lines: PackingSlipLine[] = shipment.lines.map((l) => ({
-      quantity: l.quantity,
-      code: l.code,
-      name: l.name,
-      unit: l.unit,
-      unitCents: l.unitCents,
-    }));
-
-    // A supplier's copy carries no prices at all. The line snapshot holds what
-    // the DEALER pays, and that is the one number a drop-ship supplier must
-    // never see — it is our margin. They invoice us at their own agreed rates,
-    // so a pick list is all they need. Head office sees the prices, because
-    // head office is us.
-    const showPrices = shipment.fulfilledBy === 'HEAD_OFFICE';
-
-    const buyerName = isDealer ? order.dealer?.name ?? 'Dealer' : 'GWA — internal';
-    const pdf = await buildPackingSlip({
-      orderNumber: `${order.number}${order.shipments.length > 1 ? ` (${label})` : ''}`,
-      submittedAt: order.submittedAt,
-      fulfilledByLabel: label,
-      buyerName,
-      shipTo: [
-        order.shipName,
-        order.shipLine1,
-        order.shipLine2,
-        [order.shipCity, order.shipProvince, order.shipPostal].filter(Boolean).join(' '),
-        order.shipCountry,
-      ].filter((l): l is string => !!l),
-      phone: order.shipPhone,
-      submittedBy: order.placedByName,
-      shippingMethod: shipment.shippingMethod,
-      note: order.note,
-      jobRef: order.jobRef,
-      showPrices,
-      lines,
+    // The filler gets a PICK LIST — the working document, laid out for
+    // walking shelves. A supplier's copy carries no prices; that rule lives in
+    // loadOrderDocument rather than being re-decided here.
+    const doc = await loadOrderDocument({
+      orderId: order.id,
+      shipmentId: shipment.id,
+      audience: shipment.fulfilledBy === 'HEAD_OFFICE' ? 'STAFF' : 'SUPPLIER',
     });
+    if (!doc) {
+      notifications.push({ party: label, ok: false, error: 'Could not build the pick list.' });
+      continue;
+    }
+    const pdf = await buildPickList(doc);
+    const showPrices = shipment.fulfilledBy === 'HEAD_OFFICE';
+    const buyerName = isDealer ? order.dealer?.name ?? 'Dealer' : 'GWA — internal';
 
     const text = [
       `${order.number} — ${label}`,
+      order.rush ? '*** RUSH ORDER ***' : null,
       '',
       `From:     ${buyerName}`,
       `Ordered:  ${order.placedByName}`,
@@ -254,11 +248,11 @@ export async function submitOrder(opts: {
     const sent = await sendEmail({
       to: contact.email,
       cc: contact.cc,
-      subject: `${order.number} — parts order for ${buyerName}${order.shipments.length > 1 ? ` (${label})` : ''}`,
+      subject: `${order.rush ? 'RUSH — ' : ''}${order.number} — parts order for ${buyerName}${order.shipments.length > 1 ? ` (${label})` : ''}`,
       text,
       attachments: [
         {
-          filename: `${order.number}-${label.replace(/\W+/g, '-').toLowerCase()}.pdf`,
+          filename: documentFilename('pick-list', order.number, label),
           content: pdf,
           contentType: 'application/pdf',
         },
@@ -273,6 +267,53 @@ export async function submitOrder(opts: {
     });
 
     notifications.push({ party: label, ok: sent.ok, error: sent.error });
+  }
+
+  // ── And a confirmation to the dealer, with their copy of the paperwork ──
+  // They just placed an order on account; a piece of paper saying what they
+  // ordered and where it is going is the least of it. The invoice prints
+  // unpriced while dealer pricing is still being settled, so nobody is sent a
+  // total built on a markup that has not been signed off.
+  if (isDealer && order.dealer) {
+    const to = order.dealer.billEmail || order.dealer.contactEmail;
+    if (to) {
+      const doc = await loadOrderDocument({ orderId: order.id, audience: 'DEALER' });
+      if (doc) {
+        const priced = ctx.settings.pricesVisibleToDealers;
+        const invoice = await buildInvoice(doc, { priced });
+        const deliveries = new Set(order.shipments.map((sh) => sh.id)).size;
+
+        await sendEmail({
+          to,
+          subject: `${order.rush ? 'RUSH — ' : ''}${order.number} — we have your parts order`,
+          text: [
+            `Thanks — order ${order.number} is in.`,
+            '',
+            `Ordered by: ${order.placedByName}`,
+            `Shipping:   ${opts.shippingMethod || 'Not specified'}`,
+            order.rush ? 'Marked RUSH.' : null,
+            deliveries > 1
+              ? `It will come in ${deliveries} deliveries, so it may arrive on different days.`
+              : null,
+            '',
+            ...order.shipments.flatMap((sh) =>
+              sh.lines.map((l) => `  ${String(l.quantity).padStart(4)} x ${(l.code ?? '—').padEnd(16)} ${l.name}`),
+            ),
+            '',
+            priced ? 'Your invoice is attached.' : 'Your order confirmation is attached; pricing follows separately.',
+          ]
+            .filter((l) => l !== null)
+            .join('\n'),
+          attachments: [
+            {
+              filename: documentFilename(priced ? 'invoice' : 'order', order.number),
+              content: invoice,
+              contentType: 'application/pdf',
+            },
+          ],
+        });
+      }
+    }
   }
 
   return { ok: true, orderId: order.id, orderNumber: order.number, notifications };

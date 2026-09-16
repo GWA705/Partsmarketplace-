@@ -17,6 +17,7 @@ export async function checkout(_prev: CheckoutState, formData: FormData): Promis
   const shippingMethod = String(formData.get('shippingMethod') ?? '');
   const note = String(formData.get('note') ?? '').trim() || null;
   const jobRef = String(formData.get('jobRef') ?? '').trim() || null;
+  const rush = formData.get('rush') === 'on';
 
   if (user.kind === 'DEALER' && !SHIPPING_METHODS.includes(shippingMethod as never)) {
     return { error: 'Choose how you want this shipped.' };
@@ -33,6 +34,7 @@ export async function checkout(_prev: CheckoutState, formData: FormData): Promis
     entries: cart,
     shippingMethod: shippingMethod || null,
     note,
+    rush,
     jobRef,
   });
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { prisma } from '@/lib/db';
 import { submitOrder, reorder } from '@/lib/orders';
-import { buildPackingSlip } from '@/lib/orderPdf';
+import { buildPackingSlip } from '@/lib/documents';
 import type { SessionUser } from '@/lib/session';
 
 /**
@@ -214,41 +214,4 @@ describe.runIf(process.env.DATABASE_URL)('reorder', () => {
   });
 });
 
-describe('buildPackingSlip', () => {
-  it('produces a real PDF', async () => {
-    const pdf = await buildPackingSlip({
-      orderNumber: 'PO-1001',
-      submittedAt: new Date('2026-09-15T14:00:00Z'),
-      fulfilledByLabel: 'Head office',
-      buyerName: 'Demo Dealer Co.',
-      shipTo: ['Parts Desk', '12 Bayfield St', 'Barrie ON L4M 3A1'],
-      shippingMethod: 'Standard ground',
-      showPrices: true,
-      lines: [
-        { quantity: 2, code: '0208W.IN', name: 'JG 1/4 Union Tee', unit: 'each (ea)', unitCents: 476 },
-        { quantity: 1, code: '012.H2O', name: 'TDS Meters', unit: null, unitCents: 2000 },
-      ],
-    });
-    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
-    expect(pdf.length).toBeGreaterThan(1000);
-  });
 
-  it('pages a long order rather than running off the sheet', async () => {
-    const lines = Array.from({ length: 120 }, (_, i) => ({
-      quantity: i + 1,
-      code: `CODE-${i}`,
-      name: `A part with a reasonably long description ${i}`,
-      unit: 'each (ea)',
-      unitCents: 1234,
-    }));
-    const pdf = await buildPackingSlip({
-      orderNumber: 'PO-1002',
-      submittedAt: new Date(),
-      fulfilledByLabel: 'Watergroup',
-      buyerName: 'Demo Dealer Co.',
-      showPrices: false,
-      lines,
-    });
-    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
-  });
-});

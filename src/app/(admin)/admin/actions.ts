@@ -25,12 +25,17 @@ export async function savePricing(_prev: ActionState, formData: FormData): Promi
   const markup = Number(formData.get('defaultMarkupPct'));
   const roundTo = Number(formData.get('roundToCents'));
   const visible = formData.get('pricesVisibleToDealers') === 'on';
+  const taxRate = Number(formData.get('taxRatePct') ?? 0);
+  const taxNote = String(formData.get('taxNote') ?? '').trim() || null;
 
   if (!Number.isFinite(markup) || markup < 0 || markup > 1000) {
     return { error: 'Markup must be between 0 and 1000 percent.' };
   }
   if (!Number.isFinite(roundTo) || roundTo < 1 || roundTo > 500) {
     return { error: 'Rounding must be between 1 and 500 cents.' };
+  }
+  if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
+    return { error: 'Tax must be between 0 and 100 percent.' };
   }
 
   await prisma.pricingSettings.upsert({
@@ -39,6 +44,8 @@ export async function savePricing(_prev: ActionState, formData: FormData): Promi
       defaultMarkupPct: Math.round(markup),
       roundToCents: Math.round(roundTo),
       pricesVisibleToDealers: visible,
+      taxRatePct: Math.round(taxRate),
+      taxNote,
       updatedById: user.userId,
     },
     create: {
@@ -46,6 +53,8 @@ export async function savePricing(_prev: ActionState, formData: FormData): Promi
       defaultMarkupPct: Math.round(markup),
       roundToCents: Math.round(roundTo),
       pricesVisibleToDealers: visible,
+      taxRatePct: Math.round(taxRate),
+      taxNote,
       updatedById: user.userId,
     },
   });
@@ -212,6 +221,12 @@ export async function createDealer(_prev: ActionState, formData: FormData): Prom
       shipCity: String(formData.get('shipCity') ?? '').trim() || null,
       shipProvince: String(formData.get('shipProvince') ?? '').trim() || null,
       shipPostal: String(formData.get('shipPostal') ?? '').trim() || null,
+      billAttn: String(formData.get('billAttn') ?? '').trim() || null,
+      billEmail: String(formData.get('billEmail') ?? '').trim().toLowerCase() || null,
+      billLine1: String(formData.get('billLine1') ?? '').trim() || null,
+      billCity: String(formData.get('billCity') ?? '').trim() || null,
+      billProvince: String(formData.get('billProvince') ?? '').trim() || null,
+      billPostal: String(formData.get('billPostal') ?? '').trim() || null,
     },
   });
 

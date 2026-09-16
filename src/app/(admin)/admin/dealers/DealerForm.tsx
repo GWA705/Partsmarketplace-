@@ -55,6 +55,26 @@ export default function DealerForm() {
 
       <fieldset className="border border-line rounded p-3 space-y-3">
         <legend className="text-xs font-semibold uppercase tracking-wide text-muted px-1">
+          Bill to — if different
+        </legend>
+        <p className="text-[11px] text-muted">
+          Leave blank and invoices use the shipping address. Fill it in when the parts go to the
+          shop and the paperwork goes somewhere else.
+        </p>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <input name="billAttn" placeholder="Accounts payable" className="input" aria-label="Billing attention" />
+          <input name="billEmail" type="email" placeholder="Invoice email" className="input" aria-label="Invoice email" />
+          <input name="billLine1" placeholder="Street address" className="input" aria-label="Billing street address" />
+          <input name="billCity" placeholder="City" className="input" aria-label="Billing city" />
+          <div className="grid grid-cols-2 gap-3">
+            <input name="billProvince" placeholder="ON" className="input" aria-label="Billing province" />
+            <input name="billPostal" placeholder="L4M 3A1" className="input tabular" aria-label="Billing postal code" />
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset className="border border-line rounded p-3 space-y-3">
+        <legend className="text-xs font-semibold uppercase tracking-wide text-muted px-1">
           Their login (optional)
         </legend>
         <div className="grid sm:grid-cols-2 gap-3">

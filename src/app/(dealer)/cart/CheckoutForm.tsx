@@ -44,6 +44,16 @@ export default function CheckoutForm({
         </div>
       )}
 
+      <label className="flex items-start gap-3 border border-line rounded p-3">
+        <input type="checkbox" id="rush" name="rush" className="mt-0.5" />
+        <span className="text-sm">
+          <span className="font-semibold">Rush this order</span>
+          <span className="block text-muted mt-0.5">
+            Flagged in red on the pick list so it goes to the front of the queue.
+          </span>
+        </span>
+      </label>
+
       <div>
         <label className="label" htmlFor="note">Note for whoever fills this</label>
         <textarea id="note" name="note" rows={3} className="input resize-y" />

@@ -81,6 +81,20 @@ model Dealer {
   shipPostal  String?
   shipCountry String? @default("Canada")
 
+  // ── Billing ──
+  // Kept separate from shipping because they routinely differ: parts go to the
+  // shop, the invoice goes to whoever pays. When these are blank the invoice
+  // falls back to the shipping address rather than printing nothing.
+  billAttn     String?
+  billLine1    String?
+  billLine2    String?
+  billCity     String?
+  billProvince String?
+  billPostal   String?
+  billCountry  String? @default("Canada")
+  /// Where invoices are emailed, when that is not the ordering contact.
+  billEmail    String?
+
   /// Price tier — resolves a markup when no per-part dealer price is set.
   /// See PricingSettings and PriceRule.
   tier       String  @default("STANDARD")
@@ -295,8 +309,13 @@ model Order {
 
   note String?
 
-  /// Ship-to, snapshotted from the dealer at submit time so a later address
-  /// change does not rewrite history.
+  /// Rush. Deliberately its own flag rather than a shipping-method string: it
+  /// has to shout on the pick list and the invoice, and a picker scanning a
+  /// stack of paper should see it without reading a line of small print.
+  rush Boolean @default(false)
+
+  /// Ship-to and bill-to, both snapshotted from the dealer at submit time so a
+  /// later address change does not rewrite history.
   shipName     String?
   shipLine1    String?
   shipLine2    String?
@@ -305,6 +324,15 @@ model Order {
   shipPostal   String?
   shipCountry  String?
   shipPhone    String?
+
+  billName     String?
+  billLine1    String?
+  billLine2    String?
+  billCity     String?
+  billProvince String?
+  billPostal   String?
+  billCountry  String?
+  billEmail    String?
 
   status      OrderStatus @default(SUBMITTED)
   submittedAt DateTime    @default(now())
@@ -422,6 +450,14 @@ model PricingSettings {
 
   /// Round derived prices to the nearest cent value, e.g. 5 = nearest nickel.
   roundToCents Int @default(1)
+
+  /// Sales tax shown on an invoice, in percent. Defaults to 0 — an invoice
+  /// that quietly invents a tax line is worse than one that shows none, so
+  /// this stays off until somebody sets it deliberately. Ontario HST is 13,
+  /// but a resale-exempt dealer is 0, which is why it is not assumed.
+  taxRatePct Int @default(0)
+  /// Printed under the tax line, e.g. "HST #12345 6789 RT0001".
+  taxNote    String?
 
   updatedAt   DateTime @updatedAt
   updatedById String?

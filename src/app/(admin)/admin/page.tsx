@@ -57,6 +57,8 @@ export default async function AdminPage() {
           defaultMarkupPct={settings.defaultMarkupPct}
           roundToCents={settings.roundToCents}
           pricesVisibleToDealers={settings.pricesVisibleToDealers}
+          taxRatePct={settings.taxRatePct}
+          taxNote={settings.taxNote}
           pricedParts={pricedParts}
           overriddenParts={overridden}
         />
