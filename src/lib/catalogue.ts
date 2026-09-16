@@ -1,7 +1,7 @@
 import 'server-only';
 import { prisma } from '@/lib/db';
 import { searchParts, facets, type SearchParams } from '@/lib/search';
-import { dealerPartSelect, staffPartSelect } from '@/lib/partSelect';
+import { dealerPartSelect, staffPartSelect, fillerLabel } from '@/lib/partSelect';
 import { loadPricingContext, dealerPrice } from '@/lib/pricing';
 import type { SessionUser } from '@/lib/session';
 
@@ -18,18 +18,20 @@ export interface CatalogueRow {
   code: string | null;
   catalogueCode: string | null;
   name: string;
-  vendor: string | null;
   unit: string | null;
   categoryName: string | null;
   segmentCode: string | null;
   segmentLabel: string | null;
   fulfilledBy: 'HEAD_OFFICE' | 'SUPPLIER';
+  /** "Head office" or, for a dealer, "Ships direct" — never the supplier. */
+  fillerLabel: string;
   tags: string[];
   hasImage: boolean;
-  supersededBy?: string | null;
+  supersededBy: string | null;
   /** What this viewer pays. Null means "call for pricing". */
   priceCents: number | null;
-  /** Staff only — absent entirely for dealers. */
+  /** Staff only — absent entirely from a dealer payload. */
+  vendor?: string | null;
   costCents?: number | null;
 }
 
@@ -46,7 +48,13 @@ export async function cataloguePage(
   params: SearchParams,
 ): Promise<CataloguePage> {
   const isDealer = user.kind === 'DEALER';
-  const result = await searchParts({ ...params, includeInactive: !isDealer && params.includeInactive });
+  const result = await searchParts({
+    ...params,
+    includeInactive: !isDealer && params.includeInactive,
+    // A dealer typing "Watergroup" must not be able to shake out that vendor's
+    // parts. Hiding the column is not enough if the search still matches on it.
+    matchVendor: !isDealer,
+  });
 
   if (result.ids.length === 0) {
     const ctx = await loadPricingContext();
@@ -73,6 +81,7 @@ export async function cataloguePage(
 
   const rows: CatalogueRow[] = ordered.map((p) => {
     const cost = 'costCents' in p ? (p.costCents as number | null) : null;
+    const vendor = 'vendor' in p ? (p.vendor as string | null) : null;
     const price = isDealer
       ? dealerPrice(
           {
@@ -80,7 +89,7 @@ export async function cataloguePage(
             dealerCents: p.dealerCents,
             priceOverridden: p.priceOverridden,
             categoryId: p.categoryId,
-            vendor: p.vendor,
+            vendor,
             segmentCode: p.segmentCode,
           },
           user.dealerTier,
@@ -94,17 +103,21 @@ export async function cataloguePage(
       catalogueCode: p.catalogueCode,
       // The catalogue description is usually the more human of the two.
       name: p.catalogueName || p.name,
-      vendor: p.vendor,
       unit: p.unit,
       categoryName: p.category?.name ?? null,
       segmentCode: p.segmentCode,
       segmentLabel: p.segment?.label ?? null,
       fulfilledBy: p.fulfilledBy,
+      fillerLabel: fillerLabel(p.fulfilledBy, vendor, isDealer ? 'DEALER' : 'STAFF'),
       tags: p.tags,
       hasImage: !!p.imageStorageKey,
+      supersededBy: p.supersededBy,
       priceCents: price,
     };
-    if (!isDealer) row.costCents = cost;
+    if (!isDealer) {
+      row.costCents = cost;
+      row.vendor = vendor;
+    }
     return row;
   });
 

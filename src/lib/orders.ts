@@ -201,8 +201,11 @@ export async function submitOrder(opts: {
       unitCents: l.unitCents,
     }));
 
-    // A drop-ship PO shows OUR cost to the supplier — never the dealer's price.
-    // The dealer's margin is not the supplier's business, and vice versa.
+    // A supplier's copy carries no prices at all. The line snapshot holds what
+    // the DEALER pays, and that is the one number a drop-ship supplier must
+    // never see — it is our margin. They invoice us at their own agreed rates,
+    // so a pick list is all they need. Head office sees the prices, because
+    // head office is us.
     const showPrices = shipment.fulfilledBy === 'HEAD_OFFICE';
 
     const buyerName = isDealer ? order.dealer?.name ?? 'Dealer' : 'GWA — internal';

@@ -3,16 +3,18 @@
 import { useTransition } from 'react';
 import { setCartQuantity, clearCart } from '../catalogue/actions';
 import { formatCents } from '@/lib/money';
+import PartThumb from '@/components/PartThumb';
 
 export interface CartRow {
   partId: string;
   code: string | null;
   name: string;
-  vendor: string | null;
   unit: string | null;
   quantity: number;
   priceCents: number | null;
-  fulfilledBy: 'HEAD_OFFICE' | 'SUPPLIER';
+  hasImage: boolean;
+  /** "Head office" or "Ships direct" — never the supplier's name. */
+  fillerLabel: string;
 }
 
 export default function CartLines({ rows }: { rows: CartRow[] }) {
@@ -43,11 +45,11 @@ export default function CartLines({ rows }: { rows: CartRow[] }) {
               <tr key={r.partId} className="border-b border-line last:border-0">
                 <td className="px-3 py-2 align-top tabular font-semibold">{r.code ?? '—'}</td>
                 <td className="px-3 py-2 align-top">
-                  <div>{r.name}</div>
-                  <div className="text-[11px] text-muted">
-                    {r.vendor}
-                    {r.fulfilledBy === 'SUPPLIER' ? ' · ships direct' : ''}
+                  <div className="flex items-center gap-2.5">
+                    <PartThumb partId={r.partId} hasImage={r.hasImage} size={30} />
+                    <span>{r.name}</span>
                   </div>
+                  <div className="text-[11px] text-muted mt-0.5">{r.fillerLabel}</div>
                 </td>
                 <td className="px-3 py-2 align-top text-right tabular">
                   {r.priceCents === null ? (

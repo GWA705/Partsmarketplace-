@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { requireUser } from '@/lib/session';
 import { prisma } from '@/lib/db';
-import { dealerPartSelect, staffPartSelect } from '@/lib/partSelect';
+import { dealerPartSelect, staffPartSelect, fillerLabel } from '@/lib/partSelect';
 import { loadPricingContext, dealerPrice } from '@/lib/pricing';
 import { formatCents } from '@/lib/money';
 import Shell from '@/components/Shell';
@@ -52,6 +52,7 @@ export default async function CartPage() {
       const p = byId.get(l.partId);
       if (!p) return null;
       const cost = 'costCents' in p ? (p.costCents as number | null) : null;
+      const vendor = 'vendor' in p ? (p.vendor as string | null) : null;
       const price = isDealer
         ? dealerPrice(
             {
@@ -59,7 +60,7 @@ export default async function CartPage() {
               dealerCents: p.dealerCents,
               priceOverridden: p.priceOverridden,
               categoryId: p.categoryId,
-              vendor: p.vendor,
+              vendor,
               segmentCode: p.segmentCode,
             },
             user.dealerTier,
@@ -70,11 +71,11 @@ export default async function CartPage() {
         partId: p.id,
         code: p.code,
         name: p.catalogueName || p.name,
-        vendor: p.vendor,
         unit: p.unit,
         quantity: l.quantity,
         priceCents: price,
-        fulfilledBy: p.fulfilledBy,
+        hasImage: !!p.imageStorageKey,
+        fillerLabel: fillerLabel(p.fulfilledBy, vendor, isDealer ? 'DEALER' : 'STAFF'),
       } satisfies CartRow;
     })
     .filter((r): r is CartRow => r !== null);
@@ -87,13 +88,12 @@ export default async function CartPage() {
 
   // Tell the dealer up front that their order will arrive in more than one
   // delivery — finding out from two separate couriers is how a support call
-  // starts.
-  const parties = new Set(
-    rows.map((r) => (r.fulfilledBy === 'HEAD_OFFICE' ? 'Head office' : r.vendor ?? 'Supplier')),
-  );
+  // starts. It says HOW MANY deliveries, never who is sending them: naming the
+  // suppliers here would hand over the list a row at a time.
+  const deliveries = new Set(rows.map((r) => r.fillerLabel)).size;
   const splitNote =
-    parties.size > 1
-      ? `This order will ship in ${parties.size} parts — ${[...parties].join(', ')} — so it may arrive on different days.`
+    deliveries > 1
+      ? `This order will come in ${deliveries} deliveries — some items ship direct — so it may arrive on different days.`
       : null;
 
   return (

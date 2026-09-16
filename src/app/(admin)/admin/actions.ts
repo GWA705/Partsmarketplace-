@@ -6,6 +6,9 @@ import { requireAdmin } from '@/lib/session';
 import { audit } from '@/lib/audit';
 import { recomputeDealerPrices } from '@/lib/pricing';
 import { hashPassword, passwordProblem } from '@/lib/password';
+import { storageReady } from '@/lib/storage';
+import { toCents } from '@/lib/money';
+import { PART_IMAGE_MIME_TYPES, PART_TAG_KEYS } from '@/lib/constants';
 import type { CodeSegmentKind, FulfilledBy } from '@prisma/client';
 
 export interface ActionState {
@@ -265,4 +268,130 @@ export async function setFulfillmentContact(
 
   revalidatePath('/admin/fulfillment');
   return { ok: true, message: `${party} orders will go to ${email}.` };
+}
+
+// ── Part photos ──────────────────────────────────────────────────────────────
+
+/**
+ * Attach a photo to a part.
+ *
+ * Almost nothing in the catalogue has one, and nobody is going to shoot 1,380
+ * parts — so this is built for the one-at-a-time case: whoever is looking at a
+ * part that keeps getting ordered takes a picture on their phone and drops it
+ * here. The upload is normalised and re-encoded on the way in, because a phone
+ * photo is several megabytes and rotated by EXIF.
+ */
+export async function uploadPartImage(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireAdmin();
+  const partId = String(formData.get('partId') ?? '');
+  const file = formData.get('photo');
+
+  if (!partId) return { error: 'No part given.' };
+  if (!(file instanceof File) || file.size === 0) return { error: 'Choose a photo first.' };
+  if (!PART_IMAGE_MIME_TYPES.includes(file.type)) {
+    return { error: 'Photos must be JPEG, PNG or WebP.' };
+  }
+  if (!storageReady()) {
+    return { error: 'Photo storage is not configured yet.' };
+  }
+
+  const part = await prisma.part.findUnique({
+    where: { id: partId },
+    select: { imageStorageKey: true },
+  });
+  if (!part) return { error: 'That part no longer exists.' };
+
+  const { normalizeImage } = await import('@/lib/image');
+  const { newKey, putObject, deleteObject } = await import('@/lib/storage');
+
+  const normalized = await normalizeImage(Buffer.from(await file.arrayBuffer()));
+  const key = newKey('parts', '.webp');
+  await putObject(key, normalized.buffer, normalized.mime);
+
+  await prisma.part.update({
+    where: { id: partId },
+    data: {
+      imageStorageKey: key,
+      imageMime: normalized.mime,
+      imageSizeBytes: normalized.bytes,
+    },
+  });
+
+  // Only bin the old one once the new one is safely stored and pointed at.
+  if (part.imageStorageKey) {
+    await deleteObject(part.imageStorageKey).catch(() => {});
+  }
+
+  await audit({
+    actorId: user.userId,
+    actorName: user.name,
+    action: 'part.photo',
+    entity: 'Part',
+    entityId: partId,
+    detail: `${(normalized.bytes / 1024).toFixed(0)}KB`,
+  });
+
+  revalidatePath(`/admin/parts/${partId}`);
+  revalidatePath('/catalogue');
+  revalidatePath('/staff');
+  return { ok: true, message: 'Photo added.' };
+}
+
+export async function removePartImage(partId: string): Promise<void> {
+  const user = await requireAdmin();
+  const part = await prisma.part.findUnique({
+    where: { id: partId },
+    select: { imageStorageKey: true },
+  });
+
+  await prisma.part.update({
+    where: { id: partId },
+    data: { imageStorageKey: null, imageMime: null, imageSizeBytes: null },
+  });
+
+  if (part?.imageStorageKey) {
+    const { deleteObject } = await import('@/lib/storage');
+    await deleteObject(part.imageStorageKey).catch(() => {});
+  }
+
+  await audit({
+    actorId: user.userId,
+    actorName: user.name,
+    action: 'part.photoRemove',
+    entity: 'Part',
+    entityId: partId,
+  });
+
+  revalidatePath(`/admin/parts/${partId}`);
+  revalidatePath('/catalogue');
+}
+
+/** Save the editable fields on one part. */
+export async function savePart(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const partId = String(formData.get('partId') ?? '');
+  if (!partId) return { error: 'No part given.' };
+
+  const rawPrice = String(formData.get('dealerPrice') ?? '').trim();
+  const dealerCents = rawPrice === '' ? null : toCents(rawPrice);
+  if (rawPrice !== '' && dealerCents === null) {
+    return { error: 'That price is not a number.' };
+  }
+
+  const tags = PART_TAG_KEYS.filter((t) => formData.get(`tag_${t}`) === 'on');
+  const fitsSkus = String(formData.get('fitsSkus') ?? '')
+    .split(/[,\s]+/)
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+
+  return updatePart(partId, {
+    categoryId: String(formData.get('categoryId') ?? '') || null,
+    fulfilledBy: formData.get('fulfilledBy') === 'SUPPLIER' ? 'SUPPLIER' : 'HEAD_OFFICE',
+    dealerCents,
+    active: formData.get('active') === 'on',
+    tags,
+    fitsSkus,
+  });
 }

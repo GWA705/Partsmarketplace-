@@ -4,6 +4,7 @@ import { requireUser } from '@/lib/session';
 import { prisma } from '@/lib/db';
 import { formatCents } from '@/lib/money';
 import Shell from '@/components/Shell';
+import { fillerLabel } from '@/lib/partSelect';
 import ReorderButton from '../ReorderButton';
 
 export const dynamic = 'force-dynamic';
@@ -67,14 +68,16 @@ export default async function OrderPage({
 
       <div className="space-y-4">
         {order.shipments.map((s) => {
-          const label = s.fulfilledBy === 'HEAD_OFFICE' ? 'Head office' : s.vendor ?? 'Supplier';
+          // Staff looking at the same order see the supplier by name; the
+          // dealer sees only that this part of it ships direct.
+          const label = fillerLabel(s.fulfilledBy, s.vendor, user.kind === 'DEALER' ? 'DEALER' : 'STAFF');
           const subtotal = s.lines.reduce((sum, l) => sum + (l.unitCents ?? 0) * l.quantity, 0);
           return (
             <section key={s.id} className="card overflow-hidden">
               <header className="px-3 py-2 border-b border-line flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <h2 className="font-semibold text-sm">
-                    {order.shipments.length > 1 ? `Ships from ${label}` : label}
+                    {s.fulfilledBy === 'HEAD_OFFICE' ? `Ships from ${label}` : label}
                   </h2>
                   <p className="text-xs text-muted">
                     {s.shippingMethod ?? 'Shipping not specified'}

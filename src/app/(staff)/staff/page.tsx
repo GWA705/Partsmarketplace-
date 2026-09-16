@@ -102,6 +102,8 @@ export default async function StaffCataloguePage({ searchParams }: { searchParam
               params={active}
               pricesHidden={false}
               showCost
+              showVendor
+              editable={user.staffRole === 'ADMIN'}
               basePath="/staff"
             />
           </div>

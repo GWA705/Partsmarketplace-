@@ -38,6 +38,12 @@ export interface SearchParams {
   pageSize?: number;
   /** Dealers never see inactive parts; admins do. */
   includeInactive?: boolean;
+  /**
+   * Whether a free-text query may match the vendor column. False for dealers:
+   * the vendor is not shown to them, and a search that still matched it would
+   * let anyone type "Watergroup" and read our supplier list off the results.
+   */
+  matchVendor?: boolean;
 }
 
 export interface SearchHit {
@@ -87,6 +93,18 @@ export async function searchParts(params: SearchParams): Promise<SearchResult> {
     )`);
   }
 
+  const matchVendor = params.matchVendor !== false;
+
+  // Defined once and reused by the WHERE clause and the ranking below, so the
+  // two can never disagree about whether vendor is searchable.
+  const textVector = Prisma.sql`(
+    setweight(to_tsvector('english', coalesce(p."name", '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(p."catalogueName", '')), 'B')
+    ${matchVendor
+      ? Prisma.sql`|| setweight(to_tsvector('english', coalesce(p."vendor", '')), 'C')`
+      : Prisma.empty}
+  )`;
+
   if (q) {
     const like = `%${q.toLowerCase()}%`;
     // Fuzzy matching is worth its noise only on a word. On a short string —
@@ -105,12 +123,8 @@ export async function searchParts(params: SearchParams): Promise<SearchResult> {
       OR lower(p."catalogueCode") LIKE ${like}
       OR lower(p."name") LIKE ${like}
       OR lower(p."catalogueName") LIKE ${like}
-      OR lower(p."vendor") LIKE ${like}
-      OR (
-        setweight(to_tsvector('english', coalesce(p."name", '')), 'A') ||
-        setweight(to_tsvector('english', coalesce(p."catalogueName", '')), 'B') ||
-        setweight(to_tsvector('english', coalesce(p."vendor", '')), 'C')
-      ) @@ plainto_tsquery('english', ${q})
+      ${matchVendor ? Prisma.sql`OR lower(p."vendor") LIKE ${like}` : Prisma.empty}
+      OR ${textVector} @@ plainto_tsquery('english', ${q})
       ${fuzzy}
     )`);
   }
@@ -134,12 +148,7 @@ export async function searchParts(params: SearchParams): Promise<SearchResult> {
           WHEN lower(p."code") LIKE ${contains} OR lower(p."catalogueCode") LIKE ${contains} THEN 60
           ELSE 0
         END
-        + ts_rank(
-            setweight(to_tsvector('english', coalesce(p."name", '')), 'A') ||
-            setweight(to_tsvector('english', coalesce(p."catalogueName", '')), 'B') ||
-            setweight(to_tsvector('english', coalesce(p."vendor", '')), 'C'),
-            plainto_tsquery('english', ${q})
-          ) * 20
+        + ts_rank(${textVector}, plainto_tsquery('english', ${q})) * 20
         + similarity(lower(coalesce(p."name", '')), ${exact}) * 10
       )`
     : Prisma.sql`0`;

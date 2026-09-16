@@ -29,7 +29,6 @@ export default async function CataloguePage({ searchParams }: { searchParams: Se
       page,
       pageSize: PAGE_SIZE,
       categoryId: searchParams.category,
-      vendor: searchParams.vendor,
       segmentCode: searchParams.segment,
       fulfilledBy: searchParams.ships as 'HEAD_OFFICE' | 'SUPPLIER' | undefined,
       tag: searchParams.tag,
@@ -46,7 +45,6 @@ export default async function CataloguePage({ searchParams }: { searchParams: Se
     q,
     sort: searchParams.sort,
     category: searchParams.category,
-    vendor: searchParams.vendor,
     segment: searchParams.segment,
     ships: searchParams.ships,
     tag: searchParams.tag,
@@ -71,11 +69,6 @@ export default async function CataloguePage({ searchParams }: { searchParams: Se
       title: 'Category',
       param: 'category',
       options: f.categories.map((c) => ({ value: c.id, label: c.name, count: c.count })),
-    },
-    {
-      title: 'Vendor',
-      param: 'vendor',
-      options: f.vendors.map((v) => ({ value: v.name, label: v.name, count: v.count })),
     },
     {
       title: 'Department',

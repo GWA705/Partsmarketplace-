@@ -13,8 +13,10 @@ import { dealerPartSelect } from '@/lib/partSelect';
  *
  *   GET /api/parts?fits=WHCCF,UV12          Authorization: Bearer <token>
  *
- * Deliberately uses dealerPartSelect: this crosses a network boundary, and cost
- * does not leave the building on a response that something else will render.
+ * Deliberately uses dealerPartSelect: this crosses a network boundary, so
+ * neither cost nor the supplier's name leaves the building on a response that
+ * something else renders. Whoever needs those looks them up in the staff
+ * catalogue, where they live.
  */
 export async function GET(request: Request) {
   const auth = request.headers.get('authorization') ?? '';
@@ -62,7 +64,6 @@ export async function GET(request: Request) {
         id: p.id,
         code: p.code,
         name: p.catalogueName || p.name,
-        vendor: p.vendor,
         unit: p.unit,
         fitsSkus: p.fitsSkus,
       })),

@@ -81,7 +81,7 @@ export default async function EmbedParts({
               <tr key={p.id} className="border-b border-line last:border-0">
                 <td className="py-1.5 pr-3 tabular font-semibold w-36">{p.code ?? '—'}</td>
                 <td className="py-1.5 pr-3">{p.catalogueName || p.name}</td>
-                <td className="py-1.5 text-muted text-xs w-40">{p.vendor}</td>
+                <td className="py-1.5 text-muted text-xs w-28">{p.unit}</td>
               </tr>
             ))}
           </tbody>

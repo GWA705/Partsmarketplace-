@@ -103,3 +103,36 @@ describe.runIf(process.env.DATABASE_URL)('facets', () => {
     expect(f.vendors[0].count).toBeGreaterThan(f.vendors[f.vendors.length - 1].count - 1);
   });
 });
+
+/**
+ * Hiding the vendor column achieves nothing if the search still matches on it:
+ * a dealer could type "Watergroup" and read the supplier list off the results
+ * by inference. The query has to be blind to it too.
+ */
+describe.runIf(process.env.DATABASE_URL)('vendor is not searchable for dealers', () => {
+  it('finds parts by vendor name for staff', async () => {
+    if (!hasData) return;
+    const r = await searchParts({ q: 'Watergroup', matchVendor: true });
+    expect(r.total).toBeGreaterThan(50);
+  });
+
+  it('finds none of them for a dealer', async () => {
+    if (!hasData) return;
+    const r = await searchParts({ q: 'Watergroup', matchVendor: false });
+    // A handful of parts mention a maker in their own description; what must
+    // not happen is the vendor column pulling in that vendor's whole shelf.
+    expect(r.total).toBeLessThan(10);
+  });
+
+  it('still finds parts by description with vendor matching off', async () => {
+    if (!hasData) return;
+    const r = await searchParts({ q: 'union connector', matchVendor: false });
+    expect(r.total).toBeGreaterThan(0);
+  });
+
+  it('still finds parts by code with vendor matching off', async () => {
+    if (!hasData) return;
+    const r = await searchParts({ q: '0208', matchVendor: false });
+    expect(r.total).toBeGreaterThan(0);
+  });
+});

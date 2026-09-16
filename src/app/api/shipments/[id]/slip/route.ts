@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSessionUser } from '@/lib/session';
 import { buildPackingSlip } from '@/lib/orderPdf';
+import { fillerLabel } from '@/lib/partSelect';
 
 /** The pick list, on demand — reprinted when the emailed one gets lost. */
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
@@ -19,8 +20,10 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     return new NextResponse('Not found', { status: 404 });
   }
 
-  const label =
-    shipment.fulfilledBy === 'HEAD_OFFICE' ? 'Head office' : shipment.vendor ?? 'Supplier';
+  // A dealer may reprint their own slip, and it must not name the supplier
+  // filling it — the paperwork is as much a leak as the screen.
+  const audience = user.kind === 'DEALER' ? 'DEALER' : 'STAFF';
+  const label = fillerLabel(shipment.fulfilledBy, shipment.vendor, audience);
   const order = shipment.order;
 
   const pdf = await buildPackingSlip({
